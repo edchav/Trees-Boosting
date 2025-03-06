@@ -1,14 +1,20 @@
 # implement DecisionTree with a fit and predict method
 # Set up the skeleton for the DecisionTree class
+
+import numpy as np
+from sklearn.exceptions import NotFittedError
+
+np.random.seed(42)
+
 class DecisionTree:
-    def __init__(self, criterion, max_depth, min_samples_split, min_samples_leaf):
+    def __init__(self, criterion='misclassification', max_depth=None, min_samples_split=2, min_samples_leaf=1):
         """
-        Base classifier for a decision tree, that will be useed for random forest and boosting.
+        Base classifier for a decision tree, that will be used for random forest and boosting.
 
         Parameters
         ----------
         criterion: str
-            Either 'misclassification rate', 'gini impurity', or 'entropy'.
+            Either 'misclassification', 'gini', or 'entropy'.
         max_depth: int
             The maximum depth the tree should grow.
         min_samples_split: int
@@ -20,6 +26,7 @@ class DecisionTree:
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
+        self.tree = None
     
     def fit(self, X, y):
         """
@@ -32,9 +39,120 @@ class DecisionTree:
         y: numpy.ndarray
             The labels of size (n_samples,).
         """
-        pass        
+        self.n_features = X.shape[1]
+        self.n_classes = len(np.unique(y))    
 
+        self.tree = self._grow_tree(X, y, depth=0)
 
+        return self
+
+    def _grow_tree(self, X, y, depth=0):
+        """
+        Recursively 'grows' a decision tree.
+        
+        Parameters
+        ----------
+        X: numpy.ndarray
+            The training data of size (n_samples, n_features).
+        y: numpy.ndarray
+            The labels of size (n_samples,).
+        depth: int
+            The current depth of the tree.
+        """
+        n_samples, n_features = X.shape
+        n_labels = len(np.unique(y))
+
+        # Stopping conditions
+        if(self.max_depth is not None and depth >= self.max_depth or
+                n_samples < self.min_samples_split or 
+                n_labels == 1):
+            
+            prediction = np.argmax(np.bincount(y))
+            return Node(is_leaf = True, prediction = prediction) 
+
+        # Find the best split
+        feature_idx, threshold = self._best_split(X, y)
+
+        # No split found, create a leaf node
+        if feature_idx is None:
+            prediction = np.argmax(np.bincount(y))
+            return Node(is_leaf = True, prediction = prediction)
+
+        # Split the data
+        feature_values = X[:, feature_idx]
+        left_idx = np.where(feature_values <= threshold)
+        right_idx = np.where(feature_values > threshold)
+
+        # Check min_samples_leaf constraint
+        if len(left_idx[0]) < self.min_samples_leaf or len(right_idx[0]) < self.min_samples_leaf:
+            prediction = np.argmax(np.bincount(y))
+            return Node(is_leaf = True, prediction = prediction)
+
+        # Recursively grow left and right subtree
+        left = self._grow_tree(X[left_idx], y[left_idx], depth + 1)
+        right = self._grow_tree(X[right_idx], y[right_idx], depth + 1)
+
+        return Node(feature_idx = feature_idx, threshold = threshold, left = left, right = right)
+    
+    def _best_split(self, X, y):
+        """
+        Find the best split for a node.
+        
+        Parameters
+        ----------
+        X: numpy.ndarray
+            The training data of size (n_samples, n_features).
+        y: numpy.ndarray
+            The labels of the node.
+        
+        Returns
+        -------
+        tuple
+            The index of the feature to split and the threshold to split on.
+        """
+        m = X.shape[0]
+        if m <= 1:
+            return None, None
+    
+        # Calculate the impurity for the parent
+        parent_impurity = self._node_impurity(y)
+
+        # Initialize the best split
+        best_info_gain = -float('inf')
+        best_feature_idx = None
+        best_threshold = None
+
+        for feature_idx in range(self.n_features):
+            feature_values = X[:, feature_idx]
+            thresholds = np.unique(feature_values)
+
+            for threshold in thresholds:
+                # Split the node
+                left_idx = np.where(feature_values <= threshold)
+                right_idx = np.where(feature_values > threshold)
+
+                # if split violates min_samples_leaf constraint
+                if len(left_idx[0]) < self.min_samples_leaf or len(right_idx[0]) < self.min_samples_leaf:
+                    continue
+                    
+                # Calculate the impurity
+                left_impurity = self._node_impurity(y[left_idx])
+                right_impurity = self._node_impurity(y[right_idx])
+
+                # Calculate the weights of the child nodes
+                left_weight = len(left_idx[0]) / m
+                right_weight = len(right_idx[0]) / m
+
+                # Calculate the information gain
+                info_gain = parent_impurity - (left_weight * left_impurity + right_weight * right_impurity)
+
+                # Update if split is better
+                if info_gain > best_info_gain:
+                    best_info_gain = info_gain
+                    best_feature_idx = feature_idx
+                    best_threshold = threshold
+
+        return best_feature_idx, best_threshold
 
     def predict(self, X):
         """
@@ -44,7 +162,88 @@ class DecisionTree:
         ----------
         X: numpy.ndarray
             The training data of size (n_samples, n_features)."""
-        pass 
+        if self.tree is None:
+            raise NotFittedError('Estimator not fitted, call `fit` first.')
+        return np.array([self._traverse_tree(x, self.tree) for x in X])
+
+    def _traverse_tree(self, x, node):
+        """
+        Traverse the tree to find the prediction for a given sample.
+        
+        Parameters
+        ----------
+        x: numpy.ndarray
+            The sample of size (n_features,).
+        node: Node
+            The current node being evaluated.
+        """
+        # If leaf node, return the prediction
+        if node.is_leaf is True:
+            return node.prediction
+
+        # Traverse left or right subtree
+        if x[node.feature_idx] <= node.threshold:
+            return self._traverse_tree(x, node.left)
+        else:
+            return self._traverse_tree(x, node.right)
+
+    def _node_impurity(self, y):
+        """
+        Compute the impurity of a node. 
+
+        Parameters
+        ----------
+
+        y: numpy.ndarray
+            The labels of the node.
+        """
+
+        if self.criterion == 'misclassification':
+            # 1/D * summation (y != y_not) = 1 - 
+            miss_rate = 1 - np.max(np.bincount(y) / y.size)
+            return miss_rate
+        
+        elif self.criterion == 'gini':
+            gini = 1 - np.sum((np.bincount(y) / y.size) ** 2)
+            return gini
+        
+        elif self.criterion == 'entropy':
+            # include epislon to avoid log(0)
+
+            epsilon = 1e-10
+            p = np.bincount(y) / len(y)
+            entropy = -np.sum(p * np.log2(p + epsilon))
+
+            return entropy
+        else:
+            raise ValueError('Criterion should be "misclassification", "gini", or "entropy"')
+        
+class Node:
+    def __init__(self, is_leaf = False, feature_idx=None, threshold=None, left=None, right=None, prediction=None):
+        """
+        Node in decision tree
+        
+        Parameters
+        ----------
+        is_leaf: bool
+            Whether the node is a leaf
+        feature_idx: int
+            Index of feature to split on
+        threshold: float
+            Value to split feature on
+        left: Node
+            Left child node
+        right: Node
+            Right child node
+        Prediction: int or float
+            Value at leaf node (class label)
+        """
+        self.is_leaf = is_leaf
+        self.feature_idx = feature_idx
+        self.threshold = threshold
+        self.left = left
+        self.right = right
+        self.prediction = prediction 
 
 # Set up skeleton for RandomForest class
 class RandomForest(DecisionTree):
@@ -70,6 +269,7 @@ class RandomForest(DecisionTree):
 
         Parameters
         ----------
+
         X: numpy.ndarray
             The training data of size (n_samples, n_features).
         y: numpy.ndarray
@@ -95,6 +295,7 @@ class AdaBoost(DecisionTree):
         
         Parameters
         ----------
+
         weak_learner: DecisionTree
             The classifier used as a weaker learner. An object of the DecisionTree class.
         num_learners: int
@@ -134,4 +335,36 @@ class AdaBoost(DecisionTree):
 
 
 
-    
+# Example usage
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+
+# Load data
+X, y = load_iris(return_X_y=True)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+
+# Initialize and train tree
+tree = DecisionTree(criterion='gini', max_depth=3)
+tree.predict(X_test)  # should raise NotFittedError
+
+tree.fit(X_train, y_train)
+
+# Predict and evaluate
+preds = tree.predict(X_test)
+accuracy = np.mean(preds == y_test)
+print(f"Test accuracy custom: {accuracy:.2f}")
+
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.metrics import accuracy_score
+
+# Initialize and train tree
+tree = DecisionTreeClassifier(criterion='gini', max_depth=3)
+tree.fit(X_train, y_train)
+
+# Predict and evaluate
+preds = tree.predict(X_test)
+
+accuracy = accuracy_score(y_test, preds)
+
+print(f"Test accuracy sklearn: {accuracy:.2f}")
+
