@@ -3,6 +3,7 @@
 
 import numpy as np
 from sklearn.exceptions import NotFittedError
+import copy
 
 np.random.seed(42)
 
@@ -199,7 +200,6 @@ class DecisionTree:
         """
 
         if self.criterion == 'misclassification':
-            # 1/D * summation (y != y_not) = 1 - 
             miss_rate = 1 - np.max(np.bincount(y) / y.size)
             return miss_rate
         
@@ -209,12 +209,11 @@ class DecisionTree:
         
         elif self.criterion == 'entropy':
             # include epislon to avoid log(0)
-
             epsilon = 1e-10
             p = np.bincount(y) / len(y)
             entropy = -np.sum(p * np.log2(p + epsilon))
-
             return entropy
+        
         else:
             raise ValueError('Criterion should be "misclassification", "gini", or "entropy"')
         
@@ -246,22 +245,25 @@ class Node:
         self.prediction = prediction 
 
 # Set up skeleton for RandomForest class
-class RandomForest(DecisionTree):
-    def __init__(self, num_trees, min_features):
+class RandomForest():
+    def __init__(self, classifier, num_trees, min_features):
         """
         A random forest classifier that uses DecisionTree as the base classifier.
         
         Parameters
         ----------
+        classifer: DecisionTree
+            The classifier used as a base learner. An object of the DecisionTree class.
         num_trees: int
             The number of trees in the forest.
         min_features: int
             The minimum number of features to consider when looking
             for the best split.
         """
-        super().__init__()
+        self.classifier = classifier
         self.num_trees = num_trees
-        self.min_features = min_features     
+        self.min_features = min_features  
+        self.trees = []   
     
     def fit(self, X, y):
         """
@@ -275,7 +277,34 @@ class RandomForest(DecisionTree):
         y: numpy.ndarray
             The labels of size (n_samples,).
         """
-        pass
+        n_samples, n_total_features = X.shape
+        if self.min_features > n_total_features:
+            raise ValueError('min_features must be less than or equal to the total number of features')
+        
+        self.trees = [] # clear out any previous trees
+        for _ in range(self.num_trees):
+            #bootstrap sample
+            sample_indices = np.random.choice(n_samples, size = n_samples, replace = True)
+            X_sample = X[sample_indices]
+            y_sample = y[sample_indices]
+
+            #random subset of features
+            n = np.random.randint(self.min_features, n_total_features + 1)
+            feature_indices = np.random.choice(n_total_features, size = n, replace=False)
+
+            tree = copy.deepcopy(self.classifier)
+
+            # subset of data
+            X_sample_subset = X_sample[:, feature_indices]
+
+            #fit tree
+            tree.fit(X_sample_subset, y_sample)
+
+            # store selected feature indices on tree for prediction
+            tree.feature_indices = feature_indices
+            self.trees.append(tree)
+        
+        return self
     
     def predict(self, X):
         """
@@ -286,7 +315,20 @@ class RandomForest(DecisionTree):
         X: numpy.ndarray
             The training data of size (n_samples, n_features).
         """
-        pass
+        all_tree_predictions = []
+        for tree in self.trees:
+            X_subset = X[:, tree.feature_indices]
+            predictions = tree.predict(X_subset)
+            all_tree_predictions.append(predictions)
+
+        all_tree_predictions = np.array(all_tree_predictions)
+
+        # majority vote
+        final_predictions = []
+        for i in range(all_tree_predictions.shape[1]):
+            votes = np.bincount(all_tree_predictions[:, i])
+            final_predictions.append(np.argmax(votes))
+        return np.array(final_predictions)
 
 class AdaBoost(DecisionTree):
     def __init__(self, weak_learner, num_learners, learning_rate):
@@ -344,27 +386,49 @@ X, y = load_iris(return_X_y=True)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
 # Initialize and train tree
-tree = DecisionTree(criterion='gini', max_depth=3)
-tree.predict(X_test)  # should raise NotFittedError
+# tree = DecisionTree(criterion='gini', max_depth=3)
+# #tree.predict(X_test)  # should raise NotFittedError
+# tree.fit(X_train, y_train)
 
-tree.fit(X_train, y_train)
+# # Predict and evaluate
+# preds = tree.predict(X_test)
+# accuracy = np.mean(preds == y_test)
+# print(f"Test accuracy custom: {accuracy:.2f}")
+
+# from sklearn.tree import DecisionTreeClassifier
+# from sklearn.metrics import accuracy_score
+
+# # Initialize and train tree
+# tree = DecisionTreeClassifier(criterion='gini', max_depth=3)
+# tree.fit(X_train, y_train)
+
+# # Predict and evaluate
+# preds = tree.predict(X_test)
+
+# accuracy = accuracy_score(y_test, preds)
+
+# print(f"Test accuracy sklearn: {accuracy:.2f}")
+
+# Initialize and train random forest
+forest = RandomForest(classifier=DecisionTree(criterion='gini', max_depth=3), num_trees=10, min_features=2)
+forest.fit(X_train, y_train)
 
 # Predict and evaluate
-preds = tree.predict(X_test)
+preds = forest.predict(X_test)
 accuracy = np.mean(preds == y_test)
 print(f"Test accuracy custom: {accuracy:.2f}")
 
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import accuracy_score
+from sklearn.ensemble import RandomForestClassifier
 
-# Initialize and train tree
-tree = DecisionTreeClassifier(criterion='gini', max_depth=3)
-tree.fit(X_train, y_train)
+# Initialize and train random forest
+forest = RandomForestClassifier(n_estimators=10, max_features=2)
+forest.fit(X_train, y_train)
 
 # Predict and evaluate
-preds = tree.predict(X_test)
-
-accuracy = accuracy_score(y_test, preds)
-
+preds = forest.predict(X_test)
+accuracy = np.mean(preds == y_test)
 print(f"Test accuracy sklearn: {accuracy:.2f}")
+
+
+
 
