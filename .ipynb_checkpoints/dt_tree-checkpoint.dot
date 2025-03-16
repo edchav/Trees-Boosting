@@ -1,0 +1,7 @@
+digraph Tree {
+  0 [label="X[0] <= 0.00"];
+  1 [label="Predict: Died", shape=box, style=filled, color="lightblue"];
+  2 [label="Predict: Survived", shape=box, style=filled, color="lightblue"];
+  0 -> 1 [label="yes"];
+  0 -> 2 [label="no"];
+}

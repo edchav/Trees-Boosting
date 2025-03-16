@@ -330,7 +330,7 @@ class RandomForest():
             final_predictions.append(np.argmax(votes))
         return np.array(final_predictions)
 
-class AdaBoost(DecisionTree):
+class AdaBoost():
     def __init__(self, weak_learner, num_learners, learning_rate):
         """
         An AdaBoost classifier that uses DecisionTree as the base classifier.
@@ -350,6 +350,9 @@ class AdaBoost(DecisionTree):
         self.weak_learner = weak_learner
         self.num_learners = num_learners
         self.learning_rate = learning_rate
+        self.alphas = [] # list of learner weights
+        self.learners = []
+        self.is_fitted = False
     
     def fit(self, X, y):
         """
@@ -362,8 +365,78 @@ class AdaBoost(DecisionTree):
         y: numpy.ndarray
             The labels of size (n_samples,).
         """
-        pass
+        n_samples = X.shape[0]
+
+        # Transform labels to -1 and 1
+        y_transformed = np.copy(y)
+        unique_labels = np.unique(y)
+        if np.array_equal(unique_labels, np.array([0, 1])):
+            y_transformed = 2 * y_transformed - 1
+        elif np.array_equal(unique_labels, np.array([-1, 1])):
+            pass
+        else:
+            raise ValueError('Labels must be in {0, 1} or {-1, 1}')
     
+        # Initialize weights
+        weights = np.ones(n_samples) / n_samples
+
+        self.learners = [] 
+        self.alphas = []
+
+        for _ in range(self.num_learners):
+            # create a copy of the weak learner
+            learner = copy.deepcopy(self.weak_learner)
+
+            # normalize weights to probabilities
+            probabilties = weights / np.sum(weights)
+
+            # sample with replacement according to weights
+            sample_indices = np.random.choice(n_samples, size = n_samples, replace = True, p = probabilties)
+            X_sample = X[sample_indices]
+            y_sample = y_transformed[sample_indices]
+
+            # convert to 0, 1 labels for weak learner (DecisionTree)
+            y_sample = (y_sample + 1) // 2
+
+            # fit the weak learner
+            learner.fit(X_sample, y_sample)
+
+            # make predictions and convert to -1, 1 labels
+            predictions = learner.predict(X)
+            predictions = 2 * predictions - 1
+
+            # calculate weighted error
+            misclassified = predictions != y_transformed
+            weighted_error = np.sum(weights * misclassified) / np.sum(weights)
+
+            # if error is >= 0.5 then break early (weak learner is worse than random guessing)
+            if weighted_error >= 0.5:
+                break
+            if weighted_error < 1e-10:
+                #alpha = self.learning_rate * 0.5 np.log((1 - 1e-10) / 1e-10)
+                alpha = self.learning_rate * np.log((1 - 1e-10) / 1e-10)
+
+                self.alphas.append(alpha)
+                self.learners.append(learner)
+                break
+
+            # calculate alpha
+            #alpha = self.learning_rate * 0.5 * np.log((1 - weighted_error) / weighted_error)
+            alpha = self.learning_rate * np.log((1 - weighted_error) / weighted_error)
+
+            # update weights
+            #weights *= np.exp(-alpha * y_transformed * predictions)
+            weights *= np.exp(alpha * misclassified)
+
+            # normalize weights
+            weights /= np.sum(weights)
+
+            # store alpha and learner
+            self.alphas.append(alpha)
+            self.learners.append(learner)
+        
+        self.is_fitted = True
+        return self
     def predict(self, X):
         """
         Predict the label of each sample in X. Note this is only for binary classification.
@@ -373,7 +446,16 @@ class AdaBoost(DecisionTree):
         X: numpy.ndarray
             The training data of size (n_samples, n_features).
         """
-        pass
+        if not self.is_fitted:
+            raise NotFittedError('Estimator not fitted, call `fit` first.')
+        
+        prediction_scores = np.zeros(X.shape[0])
+        for alpha, learner in zip(self.alphas, self.learners):
+            predictions = learner.predict(X)
+            predictions = 2 * predictions - 1
+            prediction_scores += alpha * predictions
+
+        return np.sign(prediction_scores)
 
 
 
@@ -409,26 +491,124 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
 # print(f"Test accuracy sklearn: {accuracy:.2f}")
 
-# Initialize and train random forest
-forest = RandomForest(classifier=DecisionTree(criterion='gini', max_depth=3), num_trees=10, min_features=2)
-forest.fit(X_train, y_train)
+# # Initialize and train random forest
+# forest = RandomForest(classifier=DecisionTree(criterion='gini', max_depth=3), num_trees=10, min_features=2)
+# forest.fit(X_train, y_train)
+
+# # Predict and evaluate
+# preds = forest.predict(X_test)
+# accuracy = np.mean(preds == y_test)
+# print(f"Test accuracy custom: {accuracy:.2f}")
+
+# from sklearn.ensemble import RandomForestClassifier
+
+# # Initialize and train random forest
+# forest = RandomForestClassifier(n_estimators=10, max_features=2)
+# forest.fit(X_train, y_train)
+
+# # Predict and evaluate
+# preds = forest.predict(X_test)
+# accuracy = np.mean(preds == y_test)
+# print(f"Test accuracy sklearn: {accuracy:.2f}")
+
+
+# import numpy as np
+# from sklearn.datasets import make_classification
+# from sklearn.ensemble import AdaBoostClassifier
+# from sklearn.model_selection import train_test_split
+# from sklearn.metrics import accuracy_score
+# from sklearn.tree import DecisionTreeClassifier
+
+# # Generate synthetic data
+# X, y = make_classification(n_samples=1000, n_features=10, 
+#                            n_informative=5, n_redundant=2,
+#                            random_state=42)
+
+# # Split data for fair comparison
+# X_train, X_test, y_train, y_test = train_test_split(
+#     X, y, test_size=0.2, random_state=42
+# )
+
+# # Initialize both implementations with same parameters
+# max_depth = 1
+# n_estimators = 50
+# learning_rate = 1.0
+
+# # Your implementation
+# custom_boost = AdaBoost(
+#     weak_learner=DecisionTree(max_depth=max_depth),
+#     num_learners=n_estimators,
+#     learning_rate=learning_rate
+# )
+
+# # Scikit-learn implementation (needs label conversion back to 0/1)
+# sklearn_boost = AdaBoostClassifier(
+#     estimator=DecisionTreeClassifier(max_depth=max_depth),
+#     n_estimators=n_estimators,
+#     learning_rate=learning_rate,
+#     random_state=42
+# )
+
+# # Train both models
+# custom_boost.fit(X_train, y_train)
+# sklearn_boost.fit(X_train, y_train)
+
+# # Make predictions
+# custom_pred = custom_boost.predict(X_test)
+# sklearn_pred = sklearn_boost.predict(X_test)
+
+# # Convert custom predictions back to 0/1 for comparison
+# custom_pred_01 = np.where(custom_pred == 1, 1, 0)
+
+# # Calculate accuracies
+# custom_acc = accuracy_score(y_test, custom_pred_01)
+# sklearn_acc = accuracy_score(y_test, sklearn_pred)
+
+# print(f"Custom AdaBoost Accuracy: {custom_acc:.4f}")
+# print(f"Scikit-Learn AdaBoost Accuracy: {sklearn_acc:.4f}")
+# print(f"Accuracy Difference: {abs(custom_acc - sklearn_acc):.4f}")
+
+# # Compare number of actually used estimators
+# print(f"\nCustom used {len(custom_boost.learners)} weak learners")
+# print(f"Scikit-learn used {len(sklearn_boost.estimators_)} weak learners")
+
+
+# Example with labels in {0, 1}
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+
+# Generate data with {0, 1} labels
+X, y = make_classification(n_samples=1000, n_features=10, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Initialize AdaBoost with DecisionTree
+adaboostCust = AdaBoost(
+    weak_learner=DecisionTree(criterion='gini', max_depth=1),
+    num_learners=50,
+    learning_rate=1.0
+)
+adaboostCust.fit(X_train, y_train)  # y_train is {0, 1}
 
 # Predict and evaluate
-preds = forest.predict(X_test)
-accuracy = np.mean(preds == y_test)
-print(f"Test accuracy custom: {accuracy:.2f}")
+preds = adaboostCust.predict(X_test)
+accuracy = accuracy_score(y_test, (preds + 1) // 2)  # Convert {-1,1} → {0,1}
+print(f"Test Accuracy Cust: {accuracy:.4f}")
 
-from sklearn.ensemble import RandomForestClassifier
+# sklearn implementation
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn.tree import DecisionTreeClassifier
 
-# Initialize and train random forest
-forest = RandomForestClassifier(n_estimators=10, max_features=2)
-forest.fit(X_train, y_train)
+# Initialize AdaBoost with DecisionTree
+adaboost = AdaBoostClassifier(
+    DecisionTreeClassifier(criterion='gini', max_depth=1),
+    n_estimators=50,
+    learning_rate=1.0
+)
+
+adaboost.fit(X_train, y_train)  # y_train is {0, 1}
 
 # Predict and evaluate
-preds = forest.predict(X_test)
-accuracy = np.mean(preds == y_test)
-print(f"Test accuracy sklearn: {accuracy:.2f}")
-
-
-
-
+preds = adaboost.predict(X_test)
+accuracy = accuracy_score(y_test, preds)
+print(f"Test Accuracy: {accuracy:.4f}")
