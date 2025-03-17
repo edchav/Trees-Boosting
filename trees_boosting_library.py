@@ -1,6 +1,3 @@
-# implement DecisionTree with a fit and predict method
-# Set up the skeleton for the DecisionTree class
-
 import numpy as np
 from sklearn.exceptions import NotFittedError
 import copy
@@ -14,13 +11,13 @@ class DecisionTree:
 
         Parameters
         ----------
-        criterion: str
-            Either 'misclassification', 'gini', or 'entropy'.
-        max_depth: int
-            The maximum depth the tree should grow.
-        min_samples_split: int
+        criterion: str {'misclassification', 'gini', 'entropy'}, default = 'misclassification'
+            A measurement of the quality of the split. 
+        max_depth: int, default = None
+            The maximum depth the tree should grow, if none grows until all leaves are pure.
+        min_samples_split: int, default = 2
             The minimum number of samples required to split.
-        min_samples_leaf: int
+        min_samples_leaf: int, default = 1
             The minimum number of samples required for a leaf node.
         """    
         self.criterion = criterion
@@ -28,7 +25,9 @@ class DecisionTree:
         self.min_samples_split = min_samples_split
         self.min_samples_leaf = min_samples_leaf
         self.tree = None
-    
+        self.n_classes = None
+        self.n_features = None
+        
     def fit(self, X, y):
         """
         Fit the decision tree classifier.
@@ -39,6 +38,11 @@ class DecisionTree:
             The training data of size (n_samples, n_features).
         y: numpy.ndarray
             The labels of size (n_samples,).
+
+        Returns:
+        -------
+        self: DecisionTree
+            Fitted Model.
         """
         self.n_features = X.shape[1]
         self.n_classes = len(np.unique(y))    
@@ -63,21 +67,40 @@ class DecisionTree:
         n_samples, n_features = X.shape
         n_labels = len(np.unique(y))
 
+        # Metadata for node
+        node_impurity = self._node_impurity(y)
+        class_counts = np.bincount(y, minlength=self.n_classes)
+
+        # create node to hold metadata
+        node = Node(
+            is_leaf = False,
+            feature_idx = None,
+            threshold = None,
+            left = None,
+            right = None,
+            prediction = None,
+            n_samples = n_samples,
+            impurity = node_impurity,
+            value = class_counts
+        )
+
         # Stopping conditions
         if(self.max_depth is not None and depth >= self.max_depth or
                 n_samples < self.min_samples_split or 
                 n_labels == 1):
-            
-            prediction = np.argmax(np.bincount(y))
-            return Node(is_leaf = True, prediction = prediction) 
+
+            node.is_leaf = True
+            node.prediction = np.argmax(np.bincount(y))
+            return node
 
         # Find the best split
         feature_idx, threshold = self._best_split(X, y)
 
         # No split found, create a leaf node
         if feature_idx is None:
-            prediction = np.argmax(np.bincount(y))
-            return Node(is_leaf = True, prediction = prediction)
+            node.is_leaf = True
+            node.prediction = np.argmax(np.bincount(y))
+            return node
 
         # Split the data
         feature_values = X[:, feature_idx]
@@ -86,14 +109,17 @@ class DecisionTree:
 
         # Check min_samples_leaf constraint
         if len(left_idx[0]) < self.min_samples_leaf or len(right_idx[0]) < self.min_samples_leaf:
-            prediction = np.argmax(np.bincount(y))
-            return Node(is_leaf = True, prediction = prediction)
+            node.is_leaf = True
+            node.prediction = np.argmax(np.bincount(y))
+            return node
 
         # Recursively grow left and right subtree
-        left = self._grow_tree(X[left_idx], y[left_idx], depth + 1)
-        right = self._grow_tree(X[right_idx], y[right_idx], depth + 1)
+        node.feature_idx = feature_idx
+        node.threshold = threshold
+        node.left = self._grow_tree(X[left_idx], y[left_idx], depth + 1)
+        node.right = self._grow_tree(X[right_idx], y[right_idx], depth + 1)
 
-        return Node(feature_idx = feature_idx, threshold = threshold, left = left, right = right)
+        return node
     
     def _best_split(self, X, y):
         """
@@ -162,10 +188,21 @@ class DecisionTree:
         Parameters
         ----------
         X: numpy.ndarray
-            The training data of size (n_samples, n_features)."""
+            The training data of size (n_samples, n_features).
+        
+        Returns
+        -------
+        numpy.ndarray
+            The predicted class labels.
+        """
+
         if self.tree is None:
             raise NotFittedError('Estimator not fitted, call `fit` first.')
-        return np.array([self._traverse_tree(x, self.tree) for x in X])
+        
+        predictions = []
+        for x in X:
+            predictions.append(self._traverse_tree(x, self.tree))
+        return np.array(predictions)
 
     def _traverse_tree(self, x, node):
         """
@@ -177,6 +214,11 @@ class DecisionTree:
             The sample of size (n_features,).
         node: Node
             The current node being evaluated.
+        
+        Returns
+        -------
+        int
+            The predicted class label.
         """
         # If leaf node, return the prediction
         if node.is_leaf is True:
@@ -197,6 +239,11 @@ class DecisionTree:
 
         y: numpy.ndarray
             The labels of the node.
+        
+        Returns
+        -------
+        float
+            The impurity of the node. 
         """
 
         if self.criterion == 'misclassification':
@@ -216,26 +263,148 @@ class DecisionTree:
         
         else:
             raise ValueError('Criterion should be "misclassification", "gini", or "entropy"')
+     
+    def export_graphviz(self, out_file, feature_names=None, class_names=None, 
+                       max_depth=None, rounded=False, filled=False):
+        """
+        Export the decision tree in DOT format.
+
+        Parameters
+        ----------
+        out_file: file object
+            Open file to write DOT file.
+        feature_names: list of str, (optional)
+            Names of the features.
+        class_names: list of str, (optional)
+            Names of the classes.
+        max_depth: int, (optional)
+            Max depth to export
+        rounded: bool, (optional)
+            If True rounds corners for the nodes.
+        filled: bool, (optional)
+            If True, colors in nodes. 
+        """
+        # Start the DOT file
+        out_file.write("digraph Tree {\n")
+        out_file.write('node [shape=box, fontname="helvetica"];\n')
+        
+        # Counter for assigning unique IDs to nodes
+        node_id_counter = [0]
+        
+        def recurse(node, depth):
+            """
+            Recursively build the tree visualization
+            
+            Parameters
+            ----------
+            node: Node
+                Current node to process.
+            depth: int 
+                Current depth in the tree.
+            
+            Returns
+            -------
+            int
+                Unique ID assigned to the current node.
+            """
+            # Assign a unique ID to this node
+            current_id = node_id_counter[0]
+            node_id_counter[0] += 1
+
+            # Check if we've reached max depth and should truncate
+            if max_depth is not None and depth >= max_depth:
+                out_file.write(f'{current_id} [label="...", shape=box, color="lightgrey"];\n')
+                return current_id
+
+            # Get label for the node
+            label_lines =  []
+            
+            # If internal node, recursively process children
+            if not node.is_leaf:
+                if feature_names is not None and node.featue_idx is not None:
+                    feature_name = feature_names[node.feature_idx]
+                else:
+                    feature_name = f'X[{node.feature_idx}]'
+                label_lines.append(f'{feature_name} <= {node.threshold:.2f}')
+            
+            # Add metadata to the node
+            if node.impurity is not None:
+                label_lines.append(f'impurity = {node.impurity:.2f}')
+            if node.n_samples is not None:
+                label_lines.append(f'samples = {node.n_samples}')
+            if node.value is not None:
+                label_lines.append(f'value = {node.value}')
+            
+            # Leaf node, display class label
+            if node.is_leaf:
+                if class_names is not None:
+                    class_name = class_names[node.prediction]
+                else:
+                    class_name = node.prediction
+                label_lines.append(f'class = {class_name}')
+            
+
+            label = '\\n'.join(label_lines)
+
+            # Style attributes
+            style_list = []
+            if filled:
+                style_list.append('filled')
+            if rounded:
+                style_list.append('rounded')
+            style_attr = f'style="{", ".join(style_list)}"'
+
+            if filled:
+                if node.is_leaf:
+                    color = 'lightblue'
+                else:
+                    color = 'orange'
+            else:
+                color = 'black'
+
+           # Write the current node definition.
+            out_file.write(f'{current_id} [label="{label}", shape=box, {style_attr}, color="{color}"];\n')
+        
+            # If not a leaf, recursively write child nodes and edge definitions.
+            if not node.is_leaf:
+                left_id = recurse(node.left, depth+1)
+                right_id = recurse(node.right, depth+1)
+                out_file.write(f'{current_id} -> {left_id} [label="yes"];\n')
+                out_file.write(f'{current_id} -> {right_id} [label="no"];\n')
+            
+            return current_id
+
+        # Begin recursion from the root.
+        recurse(self.tree, 0)
+        out_file.write("}\n")
         
 class Node:
-    def __init__(self, is_leaf = False, feature_idx=None, threshold=None, left=None, right=None, prediction=None):
+    def __init__(self, is_leaf = False, feature_idx=None, threshold=None, 
+                 left=None, right=None, prediction=None, n_samples = None,
+                impurity = None, value = None):
         """
         Node in decision tree
         
         Parameters
         ----------
         is_leaf: bool
-            Whether the node is a leaf
-        feature_idx: int
+            True if the node is a leaf
+        feature_idx: int, (optional)
             Index of feature to split on
-        threshold: float
+        threshold: float, (optional)
             Value to split feature on
-        left: Node
+        left: Node, (optional)
             Left child node
-        right: Node
+        right: Node, (optional)
             Right child node
-        Prediction: int or float
+        Prediction: int or float (optional)
             Value at leaf node (class label)
+        n_samples: int, (optional)
+            Number of samples in the node
+        impurity: float, (optional)
+            Impurity of the node
+        value: numpy.ndarray, (optional)
+            Class distribution of samples in the node
         """
         self.is_leaf = is_leaf
         self.feature_idx = feature_idx
@@ -243,8 +412,10 @@ class Node:
         self.left = left
         self.right = right
         self.prediction = prediction 
+        self.n_samples = n_samples
+        self.impurity = impurity
+        self.value = value
 
-# Set up skeleton for RandomForest class
 class RandomForest():
     def __init__(self, classifier, num_trees, min_features):
         """
@@ -276,6 +447,11 @@ class RandomForest():
             The training data of size (n_samples, n_features).
         y: numpy.ndarray
             The labels of size (n_samples,).
+        
+        Returns
+        -------
+        self: RandomForest
+            Fitted Model.
         """
         n_samples, n_total_features = X.shape
         if self.min_features > n_total_features:
@@ -333,7 +509,7 @@ class RandomForest():
 class AdaBoost():
     def __init__(self, weak_learner, num_learners, learning_rate):
         """
-        An AdaBoost classifier that uses DecisionTree as the base classifier.
+        An AdaBoost classifier that uses DecisionTree as the weak learners.
         
         Parameters
         ----------
@@ -364,6 +540,11 @@ class AdaBoost():
             The training data of size (n_samples, n_features).
         y: numpy.ndarray
             The labels of size (n_samples,).
+        
+        Returns
+        -------
+        self: AdaBoost
+            Fitted Model.
         """
         n_samples = X.shape[0]
 
@@ -413,7 +594,7 @@ class AdaBoost():
             if weighted_error >= 0.5:
                 break
             if weighted_error < 1e-10:
-                #alpha = self.learning_rate * 0.5 np.log((1 - 1e-10) / 1e-10)
+                ##alpha = self.learning_rate * 0.5 np.log((1 - 1e-10) / 1e-10)
                 alpha = self.learning_rate * np.log((1 - 1e-10) / 1e-10)
 
                 self.alphas.append(alpha)
@@ -421,12 +602,12 @@ class AdaBoost():
                 break
 
             # calculate alpha
-            #alpha = self.learning_rate * 0.5 * np.log((1 - weighted_error) / weighted_error)
+            ##alpha = self.learning_rate * 0.5 * np.log((1 - weighted_error) / weighted_error)
             alpha = self.learning_rate * np.log((1 - weighted_error) / weighted_error)
 
             # update weights
-            #weights *= np.exp(-alpha * y_transformed * predictions)
-            weights *= np.exp(alpha * misclassified)
+            ## weights *= np.exp(-alpha * y_transformed * predictions)
+            weights *= np.exp(alpha * (y_transformed != predictions))
 
             # normalize weights
             weights /= np.sum(weights)
@@ -437,6 +618,7 @@ class AdaBoost():
         
         self.is_fitted = True
         return self
+    
     def predict(self, X):
         """
         Predict the label of each sample in X. Note this is only for binary classification.
@@ -445,6 +627,11 @@ class AdaBoost():
         ----------
         X: numpy.ndarray
             The training data of size (n_samples, n_features).
+        
+        Returns
+        -------
+        numpy.ndarray
+            The predicted class labels.
         """
         if not self.is_fitted:
             raise NotFittedError('Estimator not fitted, call `fit` first.')
@@ -456,159 +643,3 @@ class AdaBoost():
             prediction_scores += alpha * predictions
 
         return np.sign(prediction_scores)
-
-
-
-# Example usage
-from sklearn.datasets import load_iris
-from sklearn.model_selection import train_test_split
-
-# Load data
-X, y = load_iris(return_X_y=True)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-
-# Initialize and train tree
-# tree = DecisionTree(criterion='gini', max_depth=3)
-# #tree.predict(X_test)  # should raise NotFittedError
-# tree.fit(X_train, y_train)
-
-# # Predict and evaluate
-# preds = tree.predict(X_test)
-# accuracy = np.mean(preds == y_test)
-# print(f"Test accuracy custom: {accuracy:.2f}")
-
-# from sklearn.tree import DecisionTreeClassifier
-# from sklearn.metrics import accuracy_score
-
-# # Initialize and train tree
-# tree = DecisionTreeClassifier(criterion='gini', max_depth=3)
-# tree.fit(X_train, y_train)
-
-# # Predict and evaluate
-# preds = tree.predict(X_test)
-
-# accuracy = accuracy_score(y_test, preds)
-
-# print(f"Test accuracy sklearn: {accuracy:.2f}")
-
-# # Initialize and train random forest
-# forest = RandomForest(classifier=DecisionTree(criterion='gini', max_depth=3), num_trees=10, min_features=2)
-# forest.fit(X_train, y_train)
-
-# # Predict and evaluate
-# preds = forest.predict(X_test)
-# accuracy = np.mean(preds == y_test)
-# print(f"Test accuracy custom: {accuracy:.2f}")
-
-# from sklearn.ensemble import RandomForestClassifier
-
-# # Initialize and train random forest
-# forest = RandomForestClassifier(n_estimators=10, max_features=2)
-# forest.fit(X_train, y_train)
-
-# # Predict and evaluate
-# preds = forest.predict(X_test)
-# accuracy = np.mean(preds == y_test)
-# print(f"Test accuracy sklearn: {accuracy:.2f}")
-
-
-# import numpy as np
-# from sklearn.datasets import make_classification
-# from sklearn.ensemble import AdaBoostClassifier
-# from sklearn.model_selection import train_test_split
-# from sklearn.metrics import accuracy_score
-# from sklearn.tree import DecisionTreeClassifier
-
-# # Generate synthetic data
-# X, y = make_classification(n_samples=1000, n_features=10, 
-#                            n_informative=5, n_redundant=2,
-#                            random_state=42)
-
-# # Split data for fair comparison
-# X_train, X_test, y_train, y_test = train_test_split(
-#     X, y, test_size=0.2, random_state=42
-# )
-
-# # Initialize both implementations with same parameters
-# max_depth = 1
-# n_estimators = 50
-# learning_rate = 1.0
-
-# # Your implementation
-# custom_boost = AdaBoost(
-#     weak_learner=DecisionTree(max_depth=max_depth),
-#     num_learners=n_estimators,
-#     learning_rate=learning_rate
-# )
-
-# # Scikit-learn implementation (needs label conversion back to 0/1)
-# sklearn_boost = AdaBoostClassifier(
-#     estimator=DecisionTreeClassifier(max_depth=max_depth),
-#     n_estimators=n_estimators,
-#     learning_rate=learning_rate,
-#     random_state=42
-# )
-
-# # Train both models
-# custom_boost.fit(X_train, y_train)
-# sklearn_boost.fit(X_train, y_train)
-
-# # Make predictions
-# custom_pred = custom_boost.predict(X_test)
-# sklearn_pred = sklearn_boost.predict(X_test)
-
-# # Convert custom predictions back to 0/1 for comparison
-# custom_pred_01 = np.where(custom_pred == 1, 1, 0)
-
-# # Calculate accuracies
-# custom_acc = accuracy_score(y_test, custom_pred_01)
-# sklearn_acc = accuracy_score(y_test, sklearn_pred)
-
-# print(f"Custom AdaBoost Accuracy: {custom_acc:.4f}")
-# print(f"Scikit-Learn AdaBoost Accuracy: {sklearn_acc:.4f}")
-# print(f"Accuracy Difference: {abs(custom_acc - sklearn_acc):.4f}")
-
-# # Compare number of actually used estimators
-# print(f"\nCustom used {len(custom_boost.learners)} weak learners")
-# print(f"Scikit-learn used {len(sklearn_boost.estimators_)} weak learners")
-
-
-# Example with labels in {0, 1}
-from sklearn.datasets import make_classification
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
-
-# Generate data with {0, 1} labels
-X, y = make_classification(n_samples=1000, n_features=10, random_state=42)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Initialize AdaBoost with DecisionTree
-adaboostCust = AdaBoost(
-    weak_learner=DecisionTree(criterion='gini', max_depth=1),
-    num_learners=50,
-    learning_rate=1.0
-)
-adaboostCust.fit(X_train, y_train)  # y_train is {0, 1}
-
-# Predict and evaluate
-preds = adaboostCust.predict(X_test)
-accuracy = accuracy_score(y_test, (preds + 1) // 2)  # Convert {-1,1} → {0,1}
-print(f"Test Accuracy Cust: {accuracy:.4f}")
-
-# sklearn implementation
-from sklearn.ensemble import AdaBoostClassifier
-from sklearn.tree import DecisionTreeClassifier
-
-# Initialize AdaBoost with DecisionTree
-adaboost = AdaBoostClassifier(
-    DecisionTreeClassifier(criterion='gini', max_depth=1),
-    n_estimators=50,
-    learning_rate=1.0
-)
-
-adaboost.fit(X_train, y_train)  # y_train is {0, 1}
-
-# Predict and evaluate
-preds = adaboost.predict(X_test)
-accuracy = accuracy_score(y_test, preds)
-print(f"Test Accuracy: {accuracy:.4f}")
