@@ -137,8 +137,8 @@ class DecisionTree:
         tuple
             The index of the feature to split and the threshold to split on.
         """
-        m = X.shape[0]
-        if m <= 1:
+        n_samples = X.shape[0]
+        if n_samples <= 1:
             return None, None
     
         # Calculate the impurity for the parent
@@ -167,8 +167,8 @@ class DecisionTree:
                 right_impurity = self._node_impurity(y[right_idx])
 
                 # Calculate the weights of the child nodes
-                left_weight = len(left_idx[0]) / m
-                right_weight = len(right_idx[0]) / m
+                left_weight = len(left_idx[0]) / n_samples
+                right_weight = len(right_idx[0]) / n_samples
 
                 # Calculate the information gain
                 info_gain = parent_impurity - (left_weight * left_impurity + right_weight * right_impurity)
@@ -321,7 +321,7 @@ class DecisionTree:
             
             # If internal node, recursively process children
             if not node.is_leaf:
-                if feature_names is not None and node.featue_idx is not None:
+                if feature_names is not None and node.feature_idx is not None:
                     feature_name = feature_names[node.feature_idx]
                 else:
                     feature_name = f'X[{node.feature_idx}]'
