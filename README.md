@@ -5,10 +5,13 @@ This repository contains custom implementation of Decision Tree, Random Forest, 
 # Requirements
 1. Python
 2. NumPy
-3. scikit-learn
-4. Graphviz
-5. Pillow
-6. IPython
+3. Pandas
+4. Seaborn
+5. Scikit-learn
+6. Graphviz
+7. Pillow
+8. IPython
+
 
 # Run the program
 1. Everything you need is in the Jupyter Notebook File and should run as is. The Tree Diagram was an additional feature I added, can be commented out if you don't have Graphviz installed. 
